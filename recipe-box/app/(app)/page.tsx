@@ -5,9 +5,9 @@ import SearchBar from "@/components/library/SearchBar";
 export default async function LibraryPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; tag?: string }>;
+  searchParams: { q?: string; tag?: string };
 }) {
-  const { q, tag } = await searchParams;
+  const { q, tag } = searchParams;
   const recipes = await listRecipes({ search: q, tag });
 
   return (

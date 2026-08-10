@@ -47,11 +47,18 @@ function findRecipeNode(json: any): any | null {
 
 /** Fetch a URL and extract a best-effort RecipeDraft. Never throws on parse. */
 export async function parseRecipeFromUrl(url: string): Promise<RecipeDraft> {
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 RecipeBox/1.0" },
-    signal: AbortSignal.timeout(8000),
-  });
-  const html = await res.text();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  let html: string;
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 RecipeBox/1.0" },
+      signal: controller.signal,
+    });
+    html = await res.text();
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const draft: RecipeDraft = {
     title: "", description: null, image_url: null, source_url: url,

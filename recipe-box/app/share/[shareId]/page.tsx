@@ -5,9 +5,8 @@ import CookingView from "@/components/recipe/CookingView";
 
 export const dynamic = "force-dynamic";
 
-export default async function SharePage({ params }: { params: Promise<{ shareId: string }> }) {
-  const { shareId } = await params;
-  const recipe = await getRecipeByShareId(shareId);
+export default async function SharePage({ params }: { params: { shareId: string } }) {
+  const recipe = await getRecipeByShareId(params.shareId);
   if (!recipe) notFound();
 
   return (
