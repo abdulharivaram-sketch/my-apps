@@ -1,0 +1,133 @@
+import type { Ingredient, RecipeDraft, Step } from "@/types";
+import { parseQuantity } from "@/lib/scaling";
+
+/** Split "1 1/2 cups flour, sifted" into { quantity, unit, name, note }. */
+export function parseIngredientLine(line: string): Ingredient {
+  const raw = line.trim();
+  const qtyMatch = raw.match(/^([\d./\s¼-¾⅐-⅞]+)?\s*(.*)$/u);
+  const qtyStr = qtyMatch?.[1]?.trim() ?? "";
+  let rest = qtyMatch?.[2]?.trim() ?? raw;
+
+  const KNOWN_UNITS = [
+    "cups", "cup", "tbsp", "tablespoons", "tablespoon", "tsp", "teaspoons", "teaspoon",
+    "g", "grams", "kg", "ml", "l", "oz", "ounces", "lb", "lbs", "pound", "pounds",
+    "cloves", "clove", "pinch", "cans", "can",
+  ];
+  let unit: string | null = null;
+  const firstWord = rest.split(/\s+/)[0]?.toLowerCase();
+  if (firstWord && KNOWN_UNITS.includes(firstWord)) {
+    unit = firstWord;
+    rest = rest.slice(firstWord.length).trim();
+  }
+
+  let note: string | null = null;
+  const commaIdx = rest.indexOf(",");
+  if (commaIdx > -1) {
+    note = rest.slice(commaIdx + 1).trim() || null;
+    rest = rest.slice(0, commaIdx).trim();
+  }
+
+  return { quantity: parseQuantity(qtyStr), unit, name: rest || raw, note };
+}
+
+function toArray<T>(x: T | T[] | undefined): T[] {
+  if (x == null) return [];
+  return Array.isArray(x) ? x : [x];
+}
+
+function findRecipeNode(json: any): any | null {
+  const nodes = Array.isArray(json) ? json : json["@graph"] ?? [json];
+  for (const n of toArray(nodes)) {
+    const type = n?.["@type"];
+    const types = Array.isArray(type) ? type : [type];
+    if (types?.includes("Recipe")) return n;
+  }
+  return null;
+}
+
+/** Fetch a URL and extract a best-effort RecipeDraft. Never throws on parse. */
+export async function parseRecipeFromUrl(url: string): Promise<RecipeDraft> {
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 RecipeBox/1.0" },
+    signal: AbortSignal.timeout(8000),
+  });
+  const html = await res.text();
+
+  const draft: RecipeDraft = {
+    title: "", description: null, image_url: null, source_url: url,
+    servings: 2, prep_minutes: null, cook_minutes: null,
+    ingredients: [], steps: [], tags: [],
+  };
+
+  const ldMatches = [
+    ...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi),
+  ];
+  for (const m of ldMatches) {
+    try {
+      const node = findRecipeNode(JSON.parse(m[1].trim()));
+      if (!node) continue;
+
+      draft.title = String(node.name ?? draft.title);
+      draft.description = node.description ? String(node.description) : draft.description;
+
+      const img = node.image;
+      draft.image_url =
+        typeof img === "string" ? img
+        : Array.isArray(img) ? (typeof img[0] === "string" ? img[0] : img[0]?.url ?? null)
+        : img?.url ?? draft.image_url;
+
+      if (node.recipeYield) {
+        const y = parseInt(String(toArray(node.recipeYield)[0]).replace(/\D/g, ""), 10);
+        if (Number.isFinite(y) && y > 0) draft.servings = y;
+      }
+      draft.prep_minutes = isoDurationToMinutes(node.prepTime) ?? draft.prep_minutes;
+      draft.cook_minutes = isoDurationToMinutes(node.cookTime) ?? draft.cook_minutes;
+
+      draft.ingredients = toArray<string>(node.recipeIngredient).map(parseIngredientLine);
+      draft.steps = extractSteps(node.recipeInstructions);
+
+      const kw = node.keywords;
+      draft.tags = typeof kw === "string"
+        ? kw.split(",").map((t: string) => t.trim()).filter(Boolean)
+        : Array.isArray(kw) ? kw.map(String) : [];
+
+      if (draft.title && draft.ingredients.length) return draft;
+    } catch {
+      // malformed JSON-LD block — try the next one
+    }
+  }
+
+  // Fallback: Open Graph for at least title + image
+  draft.title ||= meta(html, "og:title") ?? tag(html, "title") ?? "Untitled recipe";
+  draft.image_url ||= meta(html, "og:image");
+  draft.description ||= meta(html, "og:description");
+  return draft;
+}
+
+function extractSteps(instr: any): Step[] {
+  const out: Step[] = [];
+  for (const item of toArray(instr)) {
+    if (typeof item === "string") out.push({ text: item });
+    else if (item?.["@type"] === "HowToStep" && item.text) out.push({ text: String(item.text) });
+    else if (item?.["@type"] === "HowToSection") out.push(...extractSteps(item.itemListElement));
+    else if (item?.text) out.push({ text: String(item.text) });
+  }
+  return out;
+}
+
+function isoDurationToMinutes(iso?: string): number | null {
+  if (!iso || typeof iso !== "string") return null;
+  const m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?/);
+  if (!m) return null;
+  return Number(m[1] || 0) * 60 + Number(m[2] || 0) || null;
+}
+
+function meta(html: string, prop: string): string | null {
+  const re = new RegExp(
+    `<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i"
+  );
+  return html.match(re)?.[1] ?? null;
+}
+function tag(html: string, name: string): string | null {
+  return html.match(new RegExp(`<${name}[^>]*>([^<]+)</${name}>`, "i"))?.[1]?.trim() ?? null;
+}
