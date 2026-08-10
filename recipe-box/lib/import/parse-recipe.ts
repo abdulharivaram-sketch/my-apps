@@ -1,6 +1,26 @@
 import type { Ingredient, RecipeDraft, Step } from "@/types";
 import { parseQuantity } from "@/lib/scaling";
 
+/** Decode HTML entities (named + numeric) found in og:tags and captions. */
+export function decodeEntities(input: string): string {
+  if (!input) return input;
+  const named: Record<string, string> = {
+    quot: '"', amp: "&", lt: "<", gt: ">", apos: "'", nbsp: " ",
+    "#39": "'", "#34": '"', hellip: "…", mdash: "—", ndash: "–", rsquo: "'", lsquo: "'",
+  };
+  return input
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => codePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => codePoint(parseInt(d, 10)))
+    .replace(/&([a-zA-Z#0-9]+);/g, (m, name) => named[name] ?? m);
+}
+function codePoint(n: number): string {
+  try {
+    return Number.isFinite(n) ? String.fromCodePoint(n) : "";
+  } catch {
+    return "";
+  }
+}
+
 /** Split "1 1/2 cups flour, sifted" into { quantity, unit, name, note }. */
 export function parseIngredientLine(line: string): Ingredient {
   const raw = line.trim();
@@ -8,10 +28,16 @@ export function parseIngredientLine(line: string): Ingredient {
   const qtyStr = qtyMatch?.[1]?.trim() ?? "";
   let rest = qtyMatch?.[2]?.trim() ?? raw;
 
+  // Clean leftovers from ranges ("4-5 chillies" -> "-5 chillies") and fraction
+  // suffixes ("1/4th tsp" -> "th tsp"), which the quantity match leaves behind.
+  rest = rest
+    .replace(/^[–—-]\s*\d+(?:\/\d+)?\s*/, "")
+    .replace(/^(?:st|nd|rd|th)\b\s*/i, "");
+
   const KNOWN_UNITS = [
     "cups", "cup", "tbsp", "tablespoons", "tablespoon", "tsp", "teaspoons", "teaspoon",
-    "g", "grams", "kg", "ml", "l", "oz", "ounces", "lb", "lbs", "pound", "pounds",
-    "cloves", "clove", "pinch", "cans", "can",
+    "g", "gm", "gms", "grams", "gram", "kg", "ml", "l", "litre", "liter", "oz", "ounces",
+    "lb", "lbs", "pound", "pounds", "cloves", "clove", "pinch", "cans", "can", "sprig", "sprigs",
   ];
   let unit: string | null = null;
   const firstWord = rest.split(/\s+/)[0]?.toLowerCase();
@@ -28,6 +54,75 @@ export function parseIngredientLine(line: string): Ingredient {
   }
 
   return { quantity: parseQuantity(qtyStr), unit, name: rest || raw, note };
+}
+
+/**
+ * Parse a freeform social-media caption (Instagram / TikTok / notes) into a recipe.
+ * Looks for an "ingredients:" section and a "method/steps/instructions:" section,
+ * splits bullets and numbered steps, and strips trailing hashtags.
+ */
+export function parseCaptionRecipe(rawInput: string): {
+  title: string | null; ingredients: Ingredient[]; steps: Step[];
+} {
+  const text = decodeEntities(rawInput).replace(/\s+/g, " ").trim();
+  const lower = text.toLowerCase();
+
+  const ingAt = lower.search(/ingredients?\s*:/);
+  const methodAt = lower.search(/(?:method|methods|instructions?|directions?|steps|preparation)\s*:/);
+
+  // Title: text right before "recipe:" (common caption pattern), cleaned of any
+  // leading "NNk likes … : \"" prefix Instagram adds.
+  let title: string | null = null;
+  const recipeAt = lower.indexOf("recipe:");
+  if (recipeAt > 0) {
+    let pre = text.slice(0, recipeAt);
+    const cut = Math.max(pre.lastIndexOf('"'), pre.lastIndexOf("“"), pre.lastIndexOf(":"));
+    if (cut !== -1) pre = pre.slice(cut + 1);
+    pre = pre.replace(/^[\s"“”:-]+|[\s"“”:-]+$/g, "").trim();
+    if (pre.length >= 2 && pre.length <= 90) title = pre;
+  }
+
+  let ingredients: Ingredient[] = [];
+  if (ingAt !== -1) {
+    const start = lower.indexOf(":", ingAt) + 1;
+    const end = methodAt !== -1 && methodAt > ingAt ? methodAt : text.length;
+    ingredients = splitIngredients(text.slice(start, end));
+  }
+
+  let steps: Step[] = [];
+  if (methodAt !== -1) {
+    let block = text.slice(lower.indexOf(":", methodAt) + 1);
+    const hashAt = block.indexOf("#");
+    if (hashAt !== -1) block = block.slice(0, hashAt); // drop trailing #hashtags
+    steps = splitSteps(block);
+  }
+
+  return { title, ingredients, steps };
+}
+
+function splitIngredients(block: string): Ingredient[] {
+  let parts: string[];
+  if (/[•·▪●‣]/.test(block)) parts = block.split(/[•·▪●‣]/);
+  else if (block.includes("\n")) parts = block.split(/\n+/);
+  else parts = block.split(/\s*[;]\s*|\s+-\s+/);
+  return parts
+    .map((p) => p.trim())
+    .filter((p) => p.length > 1 && !/^ingredients?:?$/i.test(p))
+    .map(parseIngredientLine);
+}
+
+function splitSteps(block: string): Step[] {
+  // Primary: split on "1." "2." … numbered markers.
+  const numbered = block.split(/\s*(?:^|\s)\d{1,2}[.)]\s+/).map((s) => s.trim()).filter(Boolean);
+  if (numbered.length >= 2) return numbered.map((t) => ({ text: t }));
+  // Fallback: split on newlines, then on sentence boundaries.
+  const lines = block.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+  if (lines.length >= 2) return lines.map((t) => ({ text: t }));
+  return block
+    .split(/(?<=\.)\s+(?=[A-Za-z0-9])/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 1)
+    .map((t) => ({ text: t }));
 }
 
 function toArray<T>(x: T | T[] | undefined): T[] {
@@ -52,7 +147,10 @@ export async function parseRecipeFromUrl(url: string): Promise<RecipeDraft> {
   let html: string;
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 RecipeBox/1.0" },
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36",
+      },
       signal: controller.signal,
     });
     html = await res.text();
@@ -66,6 +164,7 @@ export async function parseRecipeFromUrl(url: string): Promise<RecipeDraft> {
     ingredients: [], steps: [], tags: [],
   };
 
+  // 1) Structured data (recipe websites)
   const ldMatches = [
     ...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi),
   ];
@@ -74,8 +173,8 @@ export async function parseRecipeFromUrl(url: string): Promise<RecipeDraft> {
       const node = findRecipeNode(JSON.parse(m[1].trim()));
       if (!node) continue;
 
-      draft.title = String(node.name ?? draft.title);
-      draft.description = node.description ? String(node.description) : draft.description;
+      draft.title = decodeEntities(String(node.name ?? draft.title));
+      draft.description = node.description ? decodeEntities(String(node.description)) : draft.description;
 
       const img = node.image;
       draft.image_url =
@@ -90,7 +189,7 @@ export async function parseRecipeFromUrl(url: string): Promise<RecipeDraft> {
       draft.prep_minutes = isoDurationToMinutes(node.prepTime) ?? draft.prep_minutes;
       draft.cook_minutes = isoDurationToMinutes(node.cookTime) ?? draft.cook_minutes;
 
-      draft.ingredients = toArray<string>(node.recipeIngredient).map(parseIngredientLine);
+      draft.ingredients = toArray<string>(node.recipeIngredient).map((s) => parseIngredientLine(decodeEntities(s)));
       draft.steps = extractSteps(node.recipeInstructions);
 
       const kw = node.keywords;
@@ -104,20 +203,39 @@ export async function parseRecipeFromUrl(url: string): Promise<RecipeDraft> {
     }
   }
 
-  // Fallback: Open Graph for at least title + image
-  draft.title ||= meta(html, "og:title") ?? tag(html, "title") ?? "Untitled recipe";
+  // 2) Open Graph (title + image + caption text)
+  const ogTitle = decodeEntities(meta(html, "og:title") ?? tag(html, "title") ?? "");
+  const ogDesc = decodeEntities(meta(html, "og:description") ?? "");
   draft.image_url ||= meta(html, "og:image");
-  draft.description ||= meta(html, "og:description");
+  draft.description ||= ogDesc || null;
+
+  // 3) Caption parsing (Instagram / TikTok / plain text posts).
+  if (draft.ingredients.length === 0) {
+    const caption = [ogDesc, ogTitle].find((c) => /ingredients?\s*:/i.test(c)) ?? "";
+    if (caption) {
+      const parsed = parseCaptionRecipe(caption);
+      if (parsed.ingredients.length) draft.ingredients = parsed.ingredients;
+      if (parsed.steps.length) draft.steps = parsed.steps;
+      if (parsed.title) draft.title = parsed.title;
+    }
+  }
+
+  // Title fallback
+  if (!draft.title) {
+    const t = ogTitle || "Untitled recipe";
+    draft.title = t.length > 80 ? t.slice(0, 77).trim() + "…" : t;
+  }
+
   return draft;
 }
 
 function extractSteps(instr: any): Step[] {
   const out: Step[] = [];
   for (const item of toArray(instr)) {
-    if (typeof item === "string") out.push({ text: item });
-    else if (item?.["@type"] === "HowToStep" && item.text) out.push({ text: String(item.text) });
+    if (typeof item === "string") out.push({ text: decodeEntities(item) });
+    else if (item?.["@type"] === "HowToStep" && item.text) out.push({ text: decodeEntities(String(item.text)) });
     else if (item?.["@type"] === "HowToSection") out.push(...extractSteps(item.itemListElement));
-    else if (item?.text) out.push({ text: String(item.text) });
+    else if (item?.text) out.push({ text: decodeEntities(String(item.text)) });
   }
   return out;
 }
@@ -131,7 +249,7 @@ function isoDurationToMinutes(iso?: string): number | null {
 
 function meta(html: string, prop: string): string | null {
   const re = new RegExp(
-    `<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']+)["']`, "i"
+    `<meta[^>]+(?:property|name)=["']${prop}["'][^>]+content=["']([^"']*)["']`, "i"
   );
   return html.match(re)?.[1] ?? null;
 }
