@@ -6,10 +6,12 @@ import { scaleIngredient, formatQuantity } from "@/lib/scaling";
 import { useWakeLock } from "@/lib/wake-lock";
 import ServingScaler from "./ServingScaler";
 import ShareButton from "./ShareButton";
+import { removeRecipe } from "@/app/(app)/recipes/actions";
 
 export default function CookingView({ recipe, readOnly = false }: { recipe: Recipe; readOnly?: boolean }) {
   const [servings, setServings] = useState(recipe.servings);
   const [done, setDone] = useState<Set<number>>(new Set());
+  const [imgError, setImgError] = useState(false);
   const { enabled, setEnabled, supported } = useWakeLock();
   const factor = servings / recipe.servings;
 
@@ -28,11 +30,17 @@ export default function CookingView({ recipe, readOnly = false }: { recipe: Reci
 
   return (
     <article className="mx-auto max-w-3xl">
-      {recipe.image_url && (
+      {recipe.image_url && !imgError ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={recipe.image_url} alt={recipe.title}
+          onError={() => setImgError(true)}
           className="mb-4 aspect-[16/9] w-full rounded-2xl object-cover" />
-      )}
+      ) : recipe.image_url ? (
+        <div className="mb-4 flex aspect-[16/9] w-full flex-col items-center justify-center rounded-2xl bg-neutral-100 text-neutral-400">
+          <span className="text-4xl">🍽️</span>
+          <span className="mt-2 text-xs">Image couldn&apos;t be loaded</span>
+        </div>
+      ) : null}
       <h1 className="text-3xl font-semibold tracking-tight">{recipe.title}</h1>
       {recipe.description &&
         recipe.description.length < 200 &&
@@ -62,6 +70,15 @@ export default function CookingView({ recipe, readOnly = false }: { recipe: Reci
               <ShareButton recipeId={recipe.id} shareId={recipe.share_id} isPublic={recipe.is_public} />
               <Link href={`/recipes/${recipe.id}/edit`}
                 className="rounded-xl border border-neutral-200 px-3 py-2 text-sm">Edit</Link>
+              <button
+                onClick={async () => {
+                  if (confirm("Delete this recipe? This can't be undone.")) {
+                    await removeRecipe(recipe.id);
+                  }
+                }}
+                className="rounded-xl border border-red-200 px-3 py-2 text-sm text-red-600 hover:bg-red-50">
+                Delete
+              </button>
             </>
           )}
         </div>
