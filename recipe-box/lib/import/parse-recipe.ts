@@ -148,6 +148,8 @@ export async function parseRecipeFromUrl(url: string): Promise<RecipeDraft> {
   try {
     const res = await fetch(url, {
       headers: {
+        // Instagram/Facebook serve rich Open Graph tags to link-preview crawlers
+        // like this UA, but a login wall to a generic browser UA.
         "User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
       },
       signal: controller.signal,
@@ -206,7 +208,9 @@ export async function parseRecipeFromUrl(url: string): Promise<RecipeDraft> {
   const ogTitle = decodeEntities(meta(html, "og:title") ?? tag(html, "title") ?? "");
   const ogDesc = decodeEntities(meta(html, "og:description") ?? "");
   draft.image_url ||= meta(html, "og:image");
-  draft.description ||= ogDesc || null;
+  // Don't dump a full recipe caption into the description.
+  draft.description ||=
+    ogDesc && ogDesc.length < 300 && !/ingredients?\s*:/i.test(ogDesc) ? ogDesc : null;
 
   // 3) Caption parsing (Instagram / TikTok / plain text posts).
   if (draft.ingredients.length === 0) {
