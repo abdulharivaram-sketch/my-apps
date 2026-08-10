@@ -34,7 +34,11 @@ export default function CookingView({ recipe, readOnly = false }: { recipe: Reci
           className="mb-4 aspect-[16/9] w-full rounded-2xl object-cover" />
       )}
       <h1 className="text-3xl font-semibold tracking-tight">{recipe.title}</h1>
-      {recipe.description && <p className="mt-2 text-neutral-600">{recipe.description}</p>}
+      {recipe.description &&
+        recipe.description.length < 200 &&
+        !/ingredients?\s*:/i.test(recipe.description) && (
+          <p className="mt-2 text-neutral-600">{recipe.description}</p>
+        )}
 
       <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-neutral-500">
         {recipe.prep_minutes != null && <span>Prep {recipe.prep_minutes}m</span>}
@@ -71,10 +75,14 @@ export default function CookingView({ recipe, readOnly = false }: { recipe: Reci
               <li key={i}>
                 <button onClick={() => toggle(i)}
                   className={`flex w-full items-baseline gap-2 rounded-lg px-2 py-2 text-left text-[15px] hover:bg-neutral-50 ${done.has(i) ? "text-neutral-400 line-through" : ""}`}>
-                  <span className="min-w-[3.5rem] font-medium">
-                    {formatQuantity(ing.quantity)}{ing.unit ? ` ${ing.unit}` : ""}
+                  <span>
+                    {(ing.quantity != null || ing.unit) && (
+                      <span className="font-medium">
+                        {formatQuantity(ing.quantity)}{ing.unit ? ` ${ing.unit}` : ""}{" "}
+                      </span>
+                    )}
+                    {ing.name}{ing.note ? `, ${ing.note}` : ""}
                   </span>
-                  <span>{ing.name}{ing.note ? `, ${ing.note}` : ""}</span>
                 </button>
               </li>
             ))}
