@@ -23,6 +23,18 @@ export async function createFolder(name: string, emoji?: string): Promise<Folder
   return data as Folder;
 }
 
+export async function deleteFolder(id: string): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase.from("folders").delete().eq("id", id);
+  if (error) throw error;
+}
+
+export async function getRecipeFolderIds(recipeId: string): Promise<string[]> {
+  const supabase = await createClient();
+  const { data } = await supabase.from("recipe_folders").select("folder_id").eq("recipe_id", recipeId);
+  return (data ?? []).map((r) => r.folder_id as string);
+}
+
 export async function addRecipeToFolder(recipeId: string, folderId: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
