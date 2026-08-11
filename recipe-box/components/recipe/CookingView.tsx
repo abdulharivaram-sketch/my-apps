@@ -1,14 +1,19 @@
 "use client";
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import type { Recipe } from "@/types";
+import type { Recipe, Folder } from "@/types";
 import { scaleIngredient, formatQuantity } from "@/lib/scaling";
 import { useWakeLock } from "@/lib/wake-lock";
 import ServingScaler from "./ServingScaler";
 import ShareButton from "./ShareButton";
 import { removeRecipe } from "@/app/(app)/recipes/actions";
+import AddToFolder from "./AddToFolder";
 
-export default function CookingView({ recipe, readOnly = false }: { recipe: Recipe; readOnly?: boolean }) {
+export default function CookingView({
+  recipe, readOnly = false, folders = [], folderIds = [],
+}: {
+  recipe: Recipe; readOnly?: boolean; folders?: Folder[]; folderIds?: string[];
+}) {
   const [servings, setServings] = useState(recipe.servings);
   const [done, setDone] = useState<Set<number>>(new Set());
   const [imgError, setImgError] = useState(false);
@@ -67,6 +72,7 @@ export default function CookingView({ recipe, readOnly = false }: { recipe: Reci
           )}
           {!readOnly && (
             <>
+              <AddToFolder recipeId={recipe.id} folders={folders} memberIds={folderIds} />
               <ShareButton recipeId={recipe.id} shareId={recipe.share_id} isPublic={recipe.is_public} />
               <Link href={`/recipes/${recipe.id}/edit`}
                 className="rounded-xl border border-neutral-200 px-3 py-2 text-sm">Edit</Link>
