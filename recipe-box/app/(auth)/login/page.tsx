@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import SocialButtons from "@/components/auth/SocialButtons";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -26,13 +27,6 @@ export default function LoginPage() {
     router.refresh();
   }
 
-  async function handleGoogle() {
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback` },
-    });
-  }
-
   const input =
     "w-full rounded-xl border border-neutral-200 px-4 py-3 text-sm outline-none focus:border-neutral-900";
 
@@ -46,6 +40,11 @@ export default function LoginPage() {
           onChange={(e) => setEmail(e.target.value)} className={input} />
         <input type="password" required placeholder="Password" value={password}
           onChange={(e) => setPassword(e.target.value)} className={input} />
+        <div className="text-right">
+          <Link href="/forgot-password" className="text-xs text-neutral-500 hover:text-neutral-900">
+            Forgot password?
+          </Link>
+        </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
         <button type="submit" disabled={loading}
           className="w-full rounded-xl bg-neutral-900 py-3 text-sm font-medium text-white transition hover:bg-neutral-800 disabled:opacity-50">
@@ -57,10 +56,7 @@ export default function LoginPage() {
         <div className="h-px flex-1 bg-neutral-200" /> or <div className="h-px flex-1 bg-neutral-200" />
       </div>
 
-      <button onClick={handleGoogle}
-        className="w-full rounded-xl border border-neutral-200 py-3 text-sm font-medium transition hover:bg-neutral-50">
-        Continue with Google
-      </button>
+      <SocialButtons />
 
       <p className="mt-6 text-center text-sm text-neutral-500">
         No account? <Link href="/signup" className="font-medium text-neutral-900 underline">Sign up</Link>
