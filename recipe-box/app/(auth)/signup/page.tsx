@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import SocialButtons from "@/components/auth/SocialButtons";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -24,12 +25,8 @@ export default function SignupPage() {
     });
     setLoading(false);
     if (error) return setError(error.message);
-    if (data.session) {
-      router.push("/");
-      router.refresh();
-    } else {
-      setMsg("Check your email to confirm your account.");
-    }
+    if (data.session) { router.push("/"); router.refresh(); }
+    else setMsg("Check your email to confirm your account.");
   }
 
   const input =
@@ -50,6 +47,13 @@ export default function SignupPage() {
           {loading ? "Creating…" : "Create account"}
         </button>
       </form>
+
+      <div className="my-5 flex items-center gap-3 text-xs text-neutral-400">
+        <div className="h-px flex-1 bg-neutral-200" /> or <div className="h-px flex-1 bg-neutral-200" />
+      </div>
+
+      <SocialButtons />
+
       <p className="mt-6 text-center text-sm text-neutral-500">
         Already have an account? <Link href="/login" className="font-medium text-neutral-900 underline">Sign in</Link>
       </p>
